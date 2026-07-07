@@ -47,7 +47,7 @@ Rails.application.config.to_prepare do
     # gem — run `bin/rails docs_kit:og` (needs a headless browser), which writes
     # app/assets/images/og/og.png, then set this. Until then, no og:image is
     # emitted (a valid card, no 404).
-    # c.seo.og_image     = "og/og.png"
+    c.seo.og_image     = "og/og.png"
     c.seo.og_type      = "website"
     c.seo.twitter_card = "summary_large_image"
     c.seo.twitter_site = "@mhenrixon"
