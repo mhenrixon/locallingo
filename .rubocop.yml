@@ -28,18 +28,16 @@ Gemspec/DevelopmentDependencies:
   Exclude:
     - "locallingo.gemspec"
 
-# lib/rubocop/cop/** are RuboCop cops — inherently branchy AST walkers.
-Metrics/CyclomaticComplexity:
+# The `release` rake task is a single long procedural block by nature.
+Metrics/BlockLength:
   Exclude:
-    - "lib/rubocop/cop/**/*"
-Metrics/PerceivedComplexity:
-  Exclude:
-    - "lib/rubocop/cop/**/*"
+    - "Rakefile"
 
 # The ported translation engine has a few inherently long/branchy methods
 # (batch-translation retry loops, nested-key parsing, state sync, output
 # rendering). Extracted where sensible; the remainder are faithful ports covered
-# by specs — don't churn them for metrics.
+# by specs — don't churn them for metrics. lib/rubocop/cop/** are RuboCop cops —
+# inherently branchy AST walkers — so they are exempt from the complexity caps.
 Metrics/MethodLength:
   Max: 35
 Metrics/AbcSize:
@@ -48,8 +46,12 @@ Metrics/ClassLength:
   Max: 300
 Metrics/CyclomaticComplexity:
   Max: 12
+  Exclude:
+    - "lib/rubocop/cop/**/*"
 Metrics/PerceivedComplexity:
   Max: 12
+  Exclude:
+    - "lib/rubocop/cop/**/*"
 # Manager#translate! + friends thread several translation knobs.
 Metrics/ParameterLists:
   Max: 7
