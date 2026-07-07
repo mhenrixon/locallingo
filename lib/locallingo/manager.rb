@@ -1,0 +1,376 @@
+# frozen_string_literal: true
+
+require "yaml"
+require "json"
+require "logger"
+require "fileutils"
+
+require_relative "configuration"
+require_relative "key_flattener"
+require_relative "state_store"
+require_relative "providers/ruby_llm"
+require_relative "validators/missing"
+require_relative "validators/outdated"
+require_relative "validators/duplicate_values"
+require_relative "validators/manual_edits"
+
+module Locallingo
+  # Manages translations with source-hash change detection.
+  #
+  # - Tracks source hashes to detect changes (drift)
+  # - Only translates missing/changed keys
+  # - Validates translation completeness (config-selected validators)
+  # - Merges LLM output back into the flat `<namespace>.<locale>.yml` files
+  #
+  # Everything app-specific (locales, provider/model, prompt context/glossary,
+  # per-language guides, which validators run) comes from the Configuration.
+  class Manager
+    MAX_RETRIES = 3
+    MAX_MISSING_RETRIES = 2
+    BASE_SLEEP_DURATION = 1.0
+
+    attr_reader :config, :dry_run, :verbose, :logger, :cli_name
+
+    def initialize(config: nil, root_path: nil, package: nil,
+                   dry_run: false, verbose: false, logger: nil, cli_name: "lingo")
+      @config = config || Configuration.load(root_path: root_path || Dir.pwd, package:)
+      @dry_run = dry_run
+      @verbose = verbose
+      @cli_name = cli_name
+      @state = StateStore.new(@config.state_dir)
+      @provider = Providers::RubyLLM.new(provider: @config.provider)
+      @logger = logger || build_logger
+    end
+
+    # Current translation status per target locale.
+    def status
+      source = load_source_translations
+
+      config.target_locales.each_with_object({}) do |locale, results|
+        target = load_locale_translations(locale)
+        locale_state = @state.load(locale)
+        missing = source.keys - target.keys
+        outdated = outdated_validator.outdated_keys(source, locale_state)
+
+        results[locale] = {
+          total_keys: source.keys.size,
+          translated: target.keys.size,
+          missing: missing.size,
+          outdated: outdated.size,
+          missing_keys: missing.first(10),
+          outdated_keys: outdated.first(10)
+        }
+      end
+    end
+
+    # Validate translations; returns an array of violation hashes. Which checks
+    # run is config-driven.
+    def validate
+      violations = []
+      source = load_source_translations
+
+      violations.concat(Validators::DuplicateValues.new.call(source:)) if config.validator_enabled?(:duplicate_values)
+
+      config.target_locales.each do |locale|
+        target = load_locale_translations(locale)
+        locale_state = @state.load(locale)
+
+        violations.concat(missing_validator.call(source:, target:, locale:)) if config.validator_enabled?(:missing)
+        if config.validator_enabled?(:outdated)
+          violations.concat(outdated_validator.call(source:, locale_state:, locale:))
+        end
+        if config.validator_enabled?(:manual_edits)
+          violations.concat(Validators::ManualEdits.new(cli_name:).call(target:, locale_state:, locale:))
+        end
+      end
+
+      violations
+    end
+
+    # Translate missing/changed keys for one or all target locales.
+    def translate!(locale: nil, force: false, force_keys: [])
+      @provider.ensure_credentials!
+
+      locales_to_process = locale ? [locale] : config.target_locales
+      source = load_source_translations
+
+      locales_to_process.each { |target_locale| translate_locale(source, target_locale, force:, force_keys:) }
+    end
+
+    # Mark every current target value as intentional (source_hash + target_hash +
+    # manual flag) so the manual-edits validator stops flagging it.
+    def accept_edits!(locale: nil)
+      source = load_source_translations
+      locales = locale ? [locale] : config.target_locales
+
+      locales.each do |target_locale|
+        target = load_locale_translations(target_locale)
+        locale_state = @state.load(target_locale)
+
+        target.each do |key, value|
+          next unless source[key]
+
+          locale_state[key] = {
+            "source_hash" => @state.hash(source[key]),
+            "target_hash" => @state.hash(value),
+            "manual" => true
+          }
+        end
+
+        @state.save(target_locale, locale_state) unless dry_run
+      end
+    end
+
+    # CRC32 hash of the current source translations (change-detection fingerprint).
+    def source_hash
+      format("%08x", Zlib.crc32(load_source_translations.to_json))
+    end
+
+    # Rewrite state from the current translation files (initial setup / after
+    # manual edits). Returns the combined state.
+    def sync_state!
+      source = load_source_translations
+
+      en_state = @state.load(config.source_locale)
+      source.each { |key, value| en_state[key] = { "source_hash" => @state.hash(value) } }
+      en_state.each_key { |key| en_state.delete(key) unless source.key?(key) }
+      @state.save(config.source_locale, en_state) unless dry_run
+
+      config.target_locales.each do |locale|
+        target = load_locale_translations(locale)
+        locale_state = @state.load(locale)
+
+        target.each_key do |key|
+          next unless source[key]
+
+          locale_state[key] = { "source_hash" => @state.hash(source[key]) }
+        end
+        locale_state.each_key { |key| locale_state.delete(key) unless target.key?(key) }
+        @state.save(locale, locale_state) unless dry_run
+      end
+
+      combined = { config.source_locale => @state.load(config.source_locale) }
+      config.target_locales.each { |locale| combined[locale] = @state.load(locale) }
+      combined
+    end
+
+    # Run the configured after_translate hook commands (from the app root).
+    def run_after_translate_hooks
+      config.after_translate.each do |command|
+        log("Running: #{command}")
+        Dir.chdir(config.root_path) { system(command) }
+      end
+    end
+
+    private
+
+    def missing_validator = @missing_validator ||= Validators::Missing.new(cli_name:)
+    def outdated_validator = @outdated_validator ||= Validators::Outdated.new(cli_name:)
+
+    def translate_locale(source, target_locale, force:, force_keys:)
+      log("Processing #{target_locale}...")
+
+      target = load_locale_translations(target_locale)
+      locale_state = @state.load(target_locale)
+      exceptions = load_exceptions(target_locale)
+
+      keys = determine_keys_to_translate(source, target, locale_state, force:, force_keys:, exceptions:)
+      if keys.empty?
+        log("  No keys to translate for #{target_locale}")
+        return
+      end
+
+      log("  Translating #{keys.size} keys...")
+      translated, failed = translate_with_missing_retries(source, keys, target_locale)
+
+      successful = translated.except(*failed)
+      unless dry_run
+        merge_translations(target_locale, successful)
+        update_locale_state(source, locale_state, successful)
+        @state.save(target_locale, locale_state)
+      end
+
+      log("  Completed #{target_locale}: #{successful.size} translated, #{failed.size} failed")
+    end
+
+    def translate_with_missing_retries(source, keys, target_locale)
+      translated, failed = translate_keys(source, keys, target_locale)
+
+      round = 0
+      while failed.any? && round < MAX_MISSING_RETRIES
+        round += 1
+        log("  Retry round #{round}: #{failed.size} keys remaining...")
+        sleep(BASE_SLEEP_DURATION * (2**round))
+        retried, failed = translate_keys(source, failed, target_locale)
+        translated.merge!(retried)
+      end
+
+      if failed.any?
+        log("  WARNING: #{failed.size} keys failed after all retries:", level: :warn)
+        failed.each { |key| log("    - #{key}", level: :warn) }
+      end
+
+      [translated, failed]
+    end
+
+    def translate_keys(source, keys, target_locale)
+      translations = {}
+      failed = []
+
+      keys.each_slice(config.batch_size) do |batch|
+        result = translate_batch(batch.to_h { |key| [key, source[key]] }, target_locale)
+        batch.each do |key|
+          if result.key?(key) && !result[key].to_s.empty?
+            translations[key] = result[key]
+          else
+            failed << key
+          end
+        end
+        sleep(BASE_SLEEP_DURATION)
+      end
+
+      [translations, failed]
+    end
+
+    def translate_batch(payload, target_locale)
+      return {} if payload.empty?
+
+      retries = 0
+      begin
+        result = @provider.chat(
+          model: config.translate_model,
+          instructions: translation_prompt(target_locale),
+          payload:
+        )
+        log("  Batch translated: #{result.keys.size}/#{payload.keys.size} keys")
+        result
+      rescue StandardError => e
+        retries += 1
+        if retries < MAX_RETRIES
+          sleep_duration = BASE_SLEEP_DURATION * (2**retries)
+          log("  Batch failed (attempt #{retries}), retrying in #{sleep_duration}s: #{e.message}", level: :warn)
+          sleep(sleep_duration)
+          retry
+        end
+        log("  Translation batch failed after #{MAX_RETRIES} retries: #{e.message}", level: :error)
+        {}
+      end
+    end
+
+    def translation_prompt(locale)
+      <<~PROMPT
+        Translate the following texts from #{config.language_name(config.source_locale)} to #{config.language_name(locale)}.
+        This is for #{config.context}.
+
+        ## General Rules
+        - Preserve placeholders like #{config.placeholder_style} exactly as they appear
+        - Preserve HTML tags if present
+        - Use formal business language
+        - Keep translations concise - UI space is limited
+        #{glossary_section}#{language_guide_section(locale)}
+        Return ONLY a raw JSON object mapping each input key to its translation,
+        with no surrounding prose and no markdown code fences:
+        {"key1": "translated1", "key2": "translated2"}
+      PROMPT
+    end
+
+    def glossary_section
+      return "" if config.glossary.empty?
+
+      lines = config.glossary.map { |term, meaning| "        - \"#{term}\" = #{meaning}" }
+      "\n## Terminology\n#{lines.join("\n")}\n"
+    end
+
+    def language_guide_section(locale)
+      guide = config.language_guide(locale)
+      guide.empty? ? "" : "\n#{guide}\n"
+    end
+
+    def determine_keys_to_translate(source, target, locale_state, force:, force_keys:, exceptions:)
+      manual_keys = locale_state.select { |_k, v| v.is_a?(Hash) && v["manual"] }.keys.to_set
+      return source.keys - manual_keys.to_a if force
+      return force_keys & source.keys if force_keys.any?
+
+      excluded = exceptions.keys.to_set | manual_keys
+      missing = source.keys - target.keys - excluded.to_a
+      outdated = outdated_validator.outdated_keys(source, locale_state) - excluded.to_a
+      (missing + outdated).uniq
+    end
+
+    def update_locale_state(source, locale_state, translations)
+      translations.each_key do |key|
+        next unless source[key]
+
+        locale_state[key] = {
+          "source_hash" => @state.hash(source[key]),
+          "target_hash" => @state.hash(translations[key])
+        }
+      end
+    end
+
+    def merge_translations(locale, translations)
+      translations.group_by { |key, _| key.split(".").first }.each do |namespace, pairs|
+        file_path = find_or_create_locale_file(locale, namespace)
+        existing = File.exist?(file_path) ? YAML.load_file(file_path) : {}
+        existing[locale] ||= {}
+        pairs.each { |key, value| KeyFlattener.set_nested_value(existing[locale], key, value) }
+        File.write(file_path, existing.to_yaml)
+      end
+    end
+
+    def find_or_create_locale_file(locale, namespace)
+      pattern = File.join(config.locales_dir, "**", "#{namespace}.#{locale}.yml")
+      Dir.glob(pattern).min || File.join(config.locales_dir, "#{namespace}.#{locale}.yml")
+    end
+
+    def load_source_translations = load_locale_translations(config.source_locale)
+
+    def load_locale_translations(locale)
+      translations = {}
+      patterns = [
+        File.join(config.locales_dir, "**", "*.#{locale}.yml"),
+        File.join(config.locales_dir, "#{locale}.yml")
+      ]
+
+      patterns.each do |pattern|
+        Dir.glob(pattern).each do |file|
+          content = YAML.load_file(file)
+          next unless content.is_a?(Hash) && content[locale]
+
+          KeyFlattener.flatten(content[locale]).each do |key, value|
+            translations[key] = value if value.is_a?(String)
+          end
+        end
+      end
+
+      translations
+    end
+
+    def load_exceptions(locale)
+      exception_file = File.join(config.exceptions_dir, "#{locale}.yml")
+      return {} unless File.exist?(exception_file)
+
+      content = YAML.load_file(exception_file)
+      return {} unless content.is_a?(Hash) && content[locale]
+
+      KeyFlattener.flatten(content[locale])
+    rescue StandardError => e
+      log("  Failed to load exceptions for #{locale}: #{e.message}", level: :warn)
+      {}
+    end
+
+    def build_logger
+      FileUtils.mkdir_p(config.state_dir)
+      logger = Logger.new(config.log_file, 5, 1_048_576)
+      logger.formatter = proc do |severity, datetime, _progname, msg|
+        "[#{datetime.strftime("%Y-%m-%d %H:%M:%S")}] #{severity}: #{msg}\n"
+      end
+      logger
+    end
+
+    def log(message, level: :info)
+      logger&.public_send(level, message)
+      warn(message) if verbose
+    end
+  end
+end

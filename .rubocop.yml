@@ -1,0 +1,75 @@
+plugins:
+  - rubocop-performance
+  - rubocop-rake
+  - rubocop-rspec
+
+AllCops:
+  TargetRubyVersion: 3.2
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - "coverage/**/*"
+    - "tmp/**/*"
+    - "vendor/**/*"
+
+Style/Documentation:
+  Enabled: false
+
+# Double quotes throughout, matching the author's other gems (docs-kit).
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+# rubocop is a gemspec DEVELOPMENT dependency on purpose: `locallingo/rubocop`
+# requires it lazily (never a runtime dep), and pinning it there lets the gem's
+# own cop specs run.
+Gemspec/DevelopmentDependencies:
+  Exclude:
+    - "locallingo.gemspec"
+
+# lib/rubocop/cop/** are RuboCop cops — inherently branchy AST walkers.
+Metrics/CyclomaticComplexity:
+  Exclude:
+    - "lib/rubocop/cop/**/*"
+Metrics/PerceivedComplexity:
+  Exclude:
+    - "lib/rubocop/cop/**/*"
+
+# The ported translation engine has a few inherently long/branchy methods
+# (batch-translation retry loops, nested-key parsing, state sync, output
+# rendering). Extracted where sensible; the remainder are faithful ports covered
+# by specs — don't churn them for metrics.
+Metrics/MethodLength:
+  Max: 35
+Metrics/AbcSize:
+  Max: 45
+Metrics/ClassLength:
+  Max: 300
+Metrics/CyclomaticComplexity:
+  Max: 12
+Metrics/PerceivedComplexity:
+  Max: 12
+# Manager#translate! + friends thread several translation knobs.
+Metrics/ParameterLists:
+  Max: 7
+
+# The JSON-extraction spec uses literal `%{...}` strings as *test data* (prose a
+# model might emit), not as format templates.
+Style/FormatStringToken:
+  Exclude:
+    - "spec/**/*"
+
+# The LLM provider stub deliberately stubs any instance so specs never hit the
+# network — the whole point of the support file.
+RSpec/AnyInstance:
+  Exclude:
+    - "spec/support/**/*"
+
+# Specs describe behavior in long example blocks and stub the LLM heavily.
+RSpec/ExampleLength:
+  Enabled: false
+RSpec/MultipleExpectations:
+  Enabled: false
+RSpec/NestedGroups:
+  Max: 5

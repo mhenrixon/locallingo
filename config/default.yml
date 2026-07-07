@@ -1,0 +1,47 @@
+# Locallingo's RuboCop cop defaults.
+#
+# In a host app's .rubocop.yml:
+#
+#   require:
+#     - locallingo/rubocop
+#   inherit_gem:
+#     locallingo: config/default.yml
+#
+# Then override Include/Exclude/ScopedDirectories as needed. Locallingo also
+# recommends disabling Rails' relative-key cops, which fight the fully-qualified
+# convention this cop enforces (uncomment in your app):
+#
+#   Rails/I18nLazyLookup: { Enabled: false }
+#   Rails/I18nLocaleTexts: { Enabled: false }
+
+Locallingo/RelativeI18nKey:
+  Description: "Use fully-qualified i18n keys instead of relative `t('.key')` keys."
+  Enabled: true
+  # Directories under app/ whose path maps to a lazy-lookup scope for autocorrect.
+  ScopedDirectories:
+    - controllers
+    - mailers
+    - views
+    - components
+    - models
+    - services
+    - jobs
+    - notifiers
+  Include:
+    - "app/components/**/*.rb"
+    - "app/views/**/*.rb"
+    - "app/controllers/**/*.rb"
+    - "app/mailers/**/*.rb"
+    - "app/models/**/*.rb"
+    - "app/services/**/*.rb"
+    - "app/jobs/**/*.rb"
+    - "app/notifiers/**/*.rb"
+
+Locallingo/StrftimeInView:
+  Description: "Use `I18n.l(value, format: :name)` instead of `.strftime` in views."
+  Enabled: true
+  Include:
+    - "app/views/**/*.rb"
+  Exclude:
+    # Mailer views format dates for email, not locale-specific display.
+    - "app/views/**/*_mailer/**/*.rb"

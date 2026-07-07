@@ -1,0 +1,70 @@
+# Locallingo configuration.
+#
+# Copy this to `.locallingo.yml` at your app root and edit. Everything under
+# `defaults:` applies to the whole app. Add `packages:` entries to override the
+# defaults for a sub-directory (engine, gem, package) — each package inherits
+# `defaults` and overrides only the keys it lists.
+#
+# The file is ERB-evaluated, so `<%= ENV["SOMETHING"] %>` works. NEVER put raw
+# API keys here — the LLM provider reads its own credentials from ENV via RubyLLM.
+
+defaults:
+  # The locale translations are authored in and translated FROM.
+  source_locale: en
+  # Locales translated TO (from the source). These are the ones Locallingo fills.
+  target_locales: [de, sv]
+
+  # Where the flat `<namespace>.<locale>.yml` files live, and where the
+  # source-hash drift state is tracked. Relative to the app root (or package path).
+  locales_dir: config/locales
+  state_dir: .i18n-state
+
+  # RubyLLM provider symbol (openai, anthropic, gemini, ...). Credentials come
+  # from ENV per RubyLLM's own config (e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY).
+  provider: openai
+
+  translate:
+    model: gpt-5-mini
+    batch_size: 20
+
+  quality:
+    model: gpt-4o-mini
+    # Flag en-only British-vs-American spelling drift (organization -> organisation).
+    british_spellings: false
+    # Named built-in terminology list ("business" | "banking" | "none"), or a
+    # path to a YAML file mapping term -> suggestion (nil = term is acceptable).
+    terminology: business
+
+  # Prompt scaffolding. `context` names your product; `glossary` pins domain terms
+  # the model must not paraphrase; `placeholder_style` documents your interpolation
+  # syntax so the model preserves it.
+  context: "a business application"
+  placeholder_style: "%<name>s, %<count>s"
+  glossary: {}
+  # Extra per-locale style guidance appended to the translation prompt. Value is
+  # inline text or `file: path/to/guide.md`.
+  language_guides: {}
+
+  # Which validators `validate` runs.
+  validators:
+    missing: true
+    outdated: true
+    duplicate_values: false   # flags non-activerecord keys duplicating an AR attribute value
+    manual_edits: false       # protects hand-edited target values from being overwritten
+
+  # What each strict tier fails CI on. `validate --strict` uses `strict`;
+  # `validate --strict-all` uses `strict_all`.
+  strict:
+    strict: [missing, outdated]
+    strict_all: [missing, outdated, duplicate_value]
+
+  # Commands run (in order) after a successful `translate`, from the app root.
+  after_translate:
+    - "bundle exec i18n-tasks normalize -p"
+
+# Optional per-location overrides. Empty means "single default config" (the
+# common case). Each entry deep-merges onto `defaults`.
+packages: []
+#  - path: engines/billing
+#    context: "the billing engine"
+#    target_locales: [de]
