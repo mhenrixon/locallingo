@@ -29,7 +29,7 @@ registry:
 
 builder:
   arch: amd64
-  context: .
+  context: ..
   dockerfile: Dockerfile
 
 env:
