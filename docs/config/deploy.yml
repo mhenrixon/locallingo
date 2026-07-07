@@ -1,0 +1,41 @@
+# Kamal deploy → the oss-infrastructure server (Cloudflare Tunnel + kamal-proxy).
+# service/image = the repo OWNER/REPO so the ghcr package auto-links to the
+# repo and GITHUB_TOKEN can push + pull it (no PAT). See docs-kit's README.
+service: locallingo
+image: mhenrixon/locallingo
+
+servers:
+  web:
+    hosts:
+      - <%= ENV["DEPLOY_HOST"] %>
+
+ssh:
+  user: <%= ENV.fetch("DEPLOY_SSH_USER", "oss") %>
+
+proxy:
+  host: <%= ENV["DEPLOY_DOMAIN"] %>
+  app_port: 3000
+  ssl: false
+  healthcheck:
+    path: /up
+    interval: 5
+    timeout: 30
+
+registry:
+  server: ghcr.io
+  username: mhenrixon
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch: amd64
+  context: .
+  dockerfile: Dockerfile
+
+env:
+  clear:
+    RAILS_SERVE_STATIC_FILES: "true"
+    RAILS_LOG_TO_STDOUT: "true"
+    # A stateless docs site: SECRET_KEY_BASE only signs cookies, so it's
+    # inlined (no user data at risk). Rotate with `bin/rails secret`.
+    SECRET_KEY_BASE: "9be5dc5ccea51c2a87b5ad8002e5fe78eca89487067ed9f1f9824bb7f47621075afb0e7aa9b795fc83f41620f4263b4c124d9f5af3c1887ac1ccf00299400c5d"
