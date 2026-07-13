@@ -54,6 +54,7 @@ module Locallingo
       # the model and return the parsed JSON object as a Hash.
       def chat(model:, instructions:, payload:)
         require "ruby_llm"
+        configure_credentials!
 
         conversation = ::RubyLLM.chat(
           model:,
@@ -63,6 +64,26 @@ module Locallingo
 
         response = conversation.ask(JSON.pretty_generate(payload))
         JsonExtraction.extract_object(response.content)
+      end
+
+      private
+
+      # RubyLLM does not read provider API keys from ENV on its own, so a
+      # standalone CLI run (no Rails initializer to call RubyLLM.configure)
+      # would raise "Missing configuration for <provider>". Fill the
+      # provider's key from ENV — unless the host app already configured
+      # one, which always wins.
+      def configure_credentials!
+        env = CREDENTIAL_ENV[provider]
+        return unless env
+
+        setting = "#{provider}_api_key"
+        config = ::RubyLLM.config
+        return unless config.respond_to?(setting) && config.respond_to?("#{setting}=")
+        return unless config.public_send(setting).to_s.strip.empty?
+
+        key = ENV.fetch(env, "")
+        config.public_send("#{setting}=", key) unless key.strip.empty?
       end
     end
   end
