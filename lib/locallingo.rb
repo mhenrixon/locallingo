@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "locallingo/version"
+require_relative "locallingo/settings"
 require_relative "locallingo/configuration"
 require_relative "locallingo/json_extraction"
 require_relative "locallingo/key_flattener"
@@ -34,5 +35,22 @@ module Locallingo
   # optionally scoped to a package path from the `packages:` list.
   def self.configuration(root_path: Dir.pwd, package: nil)
     Configuration.load(root_path:, package:)
+  end
+
+  # Code-level settings (provider credentials) — see Locallingo::Settings.
+  def self.settings
+    @settings ||= Settings.new
+  end
+
+  # Configure the gem from Ruby — the credentials path for apps whose keys
+  # don't live in ENV (call it from a Rails initializer or a `.locallingo.rb`
+  # setup file next to `.locallingo.yml`; the CLI loads the latter on start).
+  def self.configure
+    yield settings
+    settings
+  end
+
+  def self.reset_settings!
+    @settings = nil
   end
 end

@@ -18,4 +18,6 @@ RSpec.configure do |config|
   Kernel.srand config.seed
 
   config.include LocaleFixtures
+
+  config.after { Locallingo.reset_settings! }
 end
