@@ -49,13 +49,25 @@ class Views::Docs::Pages::Installation < DocsUI::Page
   def credentials
     DocsUI::Section("Provider credentials") do
       md <<~'MD'
-        locallingo never stores API keys. RubyLLM reads them from the environment
-        based on the provider you configure — for example `OPENAI_API_KEY` for
+        locallingo never stores API keys. The simplest setup is an environment
+        variable named for your provider — for example `OPENAI_API_KEY` for
         OpenAI or `ANTHROPIC_API_KEY` for Anthropic.
       MD
       DocsUI::Code(<<~'BASH', filename: ".env")
         OPENAI_API_KEY=sk-...
       BASH
+      md <<~'MD'
+        If your key lives somewhere other than ENV, configure the gem from Ruby
+        in a `.locallingo.rb` file at your app root — the CLI loads it on start,
+        no Rails boot required. See
+        [Providers & models](/docs/providers) for the full credential
+        resolution order.
+      MD
+      DocsUI::Code(<<~'RUBY', filename: ".locallingo.rb")
+        Locallingo.configure do |config|
+          config.anthropic_api_key = -> { AppConf.anthropic_api_key }
+        end
+      RUBY
       DocsUI::Callout(:note) do
         plain "Only translation and the optional AI quality pass need credentials. "
         plain "`status`, `validate`, `sync`, and the static quality checks run "

@@ -16,6 +16,11 @@ module Locallingo
   class CLI
     CLI_NAME = "lingo"
 
+    # Optional Ruby setup file loaded before dispatch — the hook for apps to
+    # configure credentials (via Locallingo.configure or RubyLLM.configure)
+    # without booting Rails.
+    SETUP_FILENAME = ".locallingo.rb"
+
     # subcommand => the legacy flag it replaces
     COMMANDS = {
       "status" => "--status",
@@ -52,6 +57,7 @@ module Locallingo
     def run
       command = resolve_command
       options = parse_options!
+      load_setup_file
       config = Locallingo.configuration(root_path: Dir.pwd, package: options[:package])
       dispatch(command, config, options)
     rescue Locallingo::Error => e
@@ -60,6 +66,13 @@ module Locallingo
     end
 
     private
+
+    # An absent file is fine; errors in the file propagate loudly. `load` (not
+    # require) so repeated in-process invocations re-execute it.
+    def load_setup_file
+      path = File.join(Dir.pwd, SETUP_FILENAME)
+      load path if File.file?(path)
+    end
 
     # Determine the subcommand, translating a leading legacy flag (with a
     # deprecation notice) and defaulting to `status`.

@@ -96,8 +96,13 @@ class Views::Docs::Pages::Configuration < DocsUI::Page
       DocsUI::Callout(:warning) do
         plain "Never put raw API keys in "
         code { ".locallingo.yml" }
-        plain ". The LLM provider reads its own credentials from the environment "
-        plain "via RubyLLM — locallingo never stores keys."
+        plain ". Credentials belong in ENV or in a "
+        code { ".locallingo.rb" }
+        plain " setup file calling "
+        code { "Locallingo.configure" }
+        plain " — see "
+        a(href: "/docs/providers") { "Providers & models" }
+        plain "."
       end
     end
   end

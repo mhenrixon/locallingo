@@ -31,14 +31,14 @@ module Locallingo
         @provider = provider.to_sym
       end
 
-      # True when credentials for the configured provider are present in ENV.
-      # Unknown providers are assumed configured (RubyLLM may source the key
-      # elsewhere) rather than blocking.
+      # True when a key for the configured provider is found in any source
+      # (Locallingo settings, host RubyLLM config, ENV). Unknown providers are
+      # assumed configured (RubyLLM may source the key elsewhere) rather than
+      # blocking.
       def credentials?
-        env = CREDENTIAL_ENV[provider]
-        return true unless env
+        return true unless CREDENTIAL_ENV.key?(provider)
 
-        !ENV.fetch(env, "").to_s.strip.empty?
+        !resolved_api_key.nil?
       end
 
       # Raise a precise error when the provider has no credentials.
@@ -46,8 +46,10 @@ module Locallingo
         return if credentials?
 
         raise MissingCredentialsError,
-              "No credentials for provider #{provider.inspect} " \
-              "(expected #{CREDENTIAL_ENV[provider]} in ENV)"
+              "No credentials for provider #{provider.inspect}. " \
+              "Set #{CREDENTIAL_ENV[provider]} in ENV, call " \
+              "Locallingo.configure { |c| c.#{provider}_api_key = ... }, or add a " \
+              ".locallingo.rb setup file at the project root (loaded by the CLI)."
       end
 
       # Send +instructions+ (system prompt) + +payload+ (user message, JSON) to
@@ -70,20 +72,55 @@ module Locallingo
 
       # RubyLLM does not read provider API keys from ENV on its own, so a
       # standalone CLI run (no Rails initializer to call RubyLLM.configure)
-      # would raise "Missing configuration for <provider>". Fill the
-      # provider's key from ENV — unless the host app already configured
-      # one, which always wins.
+      # would raise "Missing configuration for <provider>". Push the resolved
+      # key into RubyLLM's config: an explicit `Locallingo.configure` key wins
+      # (re-resolved every chat so callables stay live), then a key the host
+      # app already set, then the ENV fallback.
       def configure_credentials!
-        env = CREDENTIAL_ENV[provider]
-        return unless env
+        return unless CREDENTIAL_ENV.key?(provider)
 
-        setting = "#{provider}_api_key"
         config = ::RubyLLM.config
+        setting = key_setting
         return unless config.respond_to?(setting) && config.respond_to?("#{setting}=")
-        return unless config.public_send(setting).to_s.strip.empty?
 
-        key = ENV.fetch(env, "")
-        config.public_send("#{setting}=", key) unless key.strip.empty?
+        key = settings_api_key
+        return if key.nil? && !presence(config.public_send(setting)).nil?
+
+        key ||= env_api_key
+        config.public_send("#{setting}=", key) unless key.nil?
+      end
+
+      # Key resolution across sources, in precedence order. Used by
+      # #credentials? as a fail-fast check before any network call.
+      def resolved_api_key
+        settings_api_key || host_configured_api_key || env_api_key
+      end
+
+      def settings_api_key
+        Locallingo.settings.api_key_for(provider)
+      end
+
+      # A key the host app set via RubyLLM.configure — only inspected when
+      # ruby_llm is already loaded (we never require it just to peek).
+      def host_configured_api_key
+        return nil unless defined?(::RubyLLM)
+
+        config = ::RubyLLM.config
+        return nil unless config.respond_to?(key_setting)
+
+        presence(config.public_send(key_setting))
+      end
+
+      def env_api_key
+        env = CREDENTIAL_ENV[provider]
+        env ? presence(ENV.fetch(env, "")) : nil
+      end
+
+      def key_setting = "#{provider}_api_key"
+
+      def presence(value)
+        key = value.to_s.strip
+        key.empty? ? nil : key
       end
     end
   end

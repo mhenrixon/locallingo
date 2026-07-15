@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `Locallingo.configure { |c| c.anthropic_api_key = ... }` — gem-level provider
+  credentials as Strings or lazy callables, for apps whose keys don't live in
+  ENV (Rails credentials, app config objects, vaults). Precedence:
+  `Locallingo.configure` → host `RubyLLM.configure` → ENV.
+- `.locallingo.rb` setup file: the CLI loads it from the project root before
+  dispatch, so standalone `lingo` runs can configure credentials without
+  booting Rails.
 - Initial extraction from the `bin/translate` toolchain into a standalone gem.
 - `lingo` CLI with subcommands: `status`, `translate`, `validate`, `quality`,
   `fix-quality`, `accept-edits`, `hash`, `sync`. Legacy `--flag` forms still work
