@@ -83,4 +83,36 @@ RSpec.describe Locallingo::CLI do
       end
     end
   end
+
+  describe ".locallingo.rb setup file" do
+    it "loads it before dispatch so it can configure credentials" do
+      with_app(config: { "target_locales" => %w[de] }, locales:) do |root|
+        File.write(
+          File.join(root, ".locallingo.rb"),
+          'Locallingo.configure { |c| c.anthropic_api_key = "from-setup" }'
+        )
+
+        _out, _err, code = run_cli(root, %w[status])
+
+        expect(code).to eq(0)
+        expect(Locallingo.settings.anthropic_api_key).to eq("from-setup")
+      end
+    end
+
+    it "runs silently without one" do
+      with_app(config: { "target_locales" => %w[de] }, locales:) do |root|
+        _out, err, code = run_cli(root, %w[status])
+        expect(code).to eq(0)
+        expect(err).to be_empty
+      end
+    end
+
+    it "propagates errors from the setup file instead of swallowing them" do
+      with_app(config: { "target_locales" => %w[de] }, locales:) do |root|
+        File.write(File.join(root, ".locallingo.rb"), "NoSuchConstant.boom!")
+
+        expect { run_cli(root, %w[status]) }.to raise_error(NameError, /NoSuchConstant/)
+      end
+    end
+  end
 end
