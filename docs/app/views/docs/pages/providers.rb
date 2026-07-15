@@ -55,10 +55,43 @@ class Views::Docs::Pages::Providers < DocsUI::Page
   def credentials
     DocsUI::Section("Credentials") do
       md <<~'MD'
-        Credentials come from the environment, per RubyLLM's own configuration —
-        `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and so on.
-        locallingo fails fast with a clear message when the configured provider's
-        key is missing, before making any network call.
+        locallingo looks for the configured provider's API key in three places,
+        in order — the first non-blank key wins:
+
+        1. **`Locallingo.configure`** — a key set on the gem itself.
+        2. **`RubyLLM.configure`** — a key the host app set on RubyLLM directly
+           (a Rails initializer, typically).
+        3. **ENV** — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
+           and so on.
+
+        A plain ENV var is all most setups need. When your key lives somewhere
+        else — Rails credentials, an app config object, a vault — configure the
+        gem from Ruby. Values can be Strings or callables; callables are
+        resolved fresh on every LLM call, never cached:
+      MD
+      DocsUI::Code(<<~'RUBY', filename: "Ruby")
+        Locallingo.configure do |config|
+          config.anthropic_api_key = Rails.application.credentials.anthropic_api_key
+          config.openai_api_key = -> { AppConf.openai_api_key }  # resolved lazily
+        end
+      RUBY
+      md <<~'MD'
+        ### Standalone CLI runs
+
+        `lingo` doesn't boot Rails, so an initializer never runs for it. Put the
+        configure call in a `.locallingo.rb` file next to `.locallingo.yml` —
+        the CLI loads it before dispatch:
+      MD
+      DocsUI::Code(<<~'RUBY', filename: ".locallingo.rb")
+        require_relative "config/app_conf"
+
+        Locallingo.configure do |config|
+          config.anthropic_api_key = -> { AppConf.anthropic_api_key }
+        end
+      RUBY
+      md <<~'MD'
+        locallingo fails fast with a clear message when no source yields a key,
+        before making any network call.
       MD
       DocsUI::Callout(:note) do
         plain "Only "

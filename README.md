@@ -32,8 +32,21 @@ group :development do
 end
 ```
 
-RubyLLM reads provider credentials from ENV (e.g. `OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY`). Locallingo never stores keys.
+Provider credentials come from ENV (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`)
+or from Ruby, for apps whose keys live elsewhere (Rails credentials, an app
+config object, a vault):
+
+```ruby
+Locallingo.configure do |config|
+  config.anthropic_api_key = "sk-ant-..."            # a String…
+  config.openai_api_key = -> { AppConf.openai_key }  # …or a lazy callable
+end
+```
+
+Put that in a `.locallingo.rb` file next to `.locallingo.yml` and the `lingo`
+CLI loads it on start — no Rails boot required. A key set via
+`Locallingo.configure` wins over one set through `RubyLLM.configure`, which
+wins over ENV. Locallingo never stores keys itself.
 
 ## Configuration
 
