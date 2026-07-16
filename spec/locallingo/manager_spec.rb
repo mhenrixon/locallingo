@@ -173,7 +173,7 @@ RSpec.describe Locallingo::Manager do
       end
     end
 
-    it "leaves bare entries bare (no target_hash or manual invented)" do
+    it "backfills a missing target_hash from the current value without inventing manual" do
       with_app(
         config: { "target_locales" => %w[de] },
         locales: {
@@ -186,7 +186,28 @@ RSpec.describe Locallingo::Manager do
         described_class.new(config: config_for(root)).sync_state!
 
         entry = read_state(root, "greeting.de.json").fetch("greeting.hi")
-        expect(entry).to eq("source_hash" => Locallingo::StateStore.hash("Hello"))
+        expect(entry).to eq(
+          "source_hash" => Locallingo::StateStore.hash("Hello"),
+          "target_hash" => Locallingo::StateStore.hash("Hallo")
+        )
+      end
+    end
+
+    it "records a full entry for keys with no state at all" do
+      with_app(
+        config: { "target_locales" => %w[de] },
+        locales: {
+          "en" => { "greeting" => { "hi" => "Hello" } },
+          "de" => { "greeting" => { "hi" => "Hallo" } }
+        }
+      ) do |root|
+        described_class.new(config: config_for(root)).sync_state!
+
+        entry = read_state(root, "greeting.de.json").fetch("greeting.hi")
+        expect(entry).to eq(
+          "source_hash" => Locallingo::StateStore.hash("Hello"),
+          "target_hash" => Locallingo::StateStore.hash("Hallo")
+        )
       end
     end
 
