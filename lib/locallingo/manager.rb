@@ -97,27 +97,35 @@ module Locallingo
       locales_to_process.each { |target_locale| translate_locale(source, target_locale, force:, force_keys:) }
     end
 
-    # Mark every current target value as intentional (source_hash + target_hash +
-    # manual flag) so the manual-edits validator stops flagging it.
-    def accept_edits!(locale: nil)
+    # Mark hand-edited target values as intentional (source_hash + target_hash +
+    # manual flag) so the manual-edits validator stops flagging them and
+    # translate won't overwrite them. Unscoped, it accepts exactly the keys the
+    # manual-edits validator flags; `keys:` accepts the named keys regardless of
+    # drift; `all: true` marks every translated key (initial adoption). Returns
+    # `{ locale => accepted_keys }`.
+    def accept_edits!(locale: nil, keys: [], all: false)
       source = load_source_translations
       locales = locale ? [locale] : config.target_locales
 
-      locales.each do |target_locale|
+      plans = locales.map do |target_locale|
         target = load_locale_translations(target_locale)
         locale_state = @state.load(target_locale)
+        accepted = keys_to_accept(source, target, locale_state, keys:, all:)
+        [target_locale, target, locale_state, accepted]
+      end
 
-        target.each do |key, value|
-          next unless source[key]
+      ensure_keys_matched!(keys, plans)
 
+      plans.each_with_object({}) do |(target_locale, target, locale_state, accepted), results|
+        accepted.each do |key|
           locale_state[key] = {
             "source_hash" => @state.hash(source[key]),
-            "target_hash" => @state.hash(value),
+            "target_hash" => @state.hash(target[key]),
             "manual" => true
           }
         end
-
         @state.save(target_locale, locale_state) unless dry_run
+        results[target_locale] = accepted
       end
     end
 
@@ -126,8 +134,11 @@ module Locallingo
       format("%08x", Zlib.crc32(load_source_translations.to_json))
     end
 
-    # Rewrite state from the current translation files (initial setup / after
-    # manual edits). Returns the combined state.
+    # Refresh source hashes from the current translation files and prune state
+    # for keys that no longer exist. Existing `target_hash`/`manual` fields are
+    # preserved — hand-edit protection is never dropped by a sync; use
+    # `accept_edits!` to resolve hand-edit drift explicitly. Returns the
+    # combined state.
     def sync_state!
       source = load_source_translations
 
@@ -136,18 +147,7 @@ module Locallingo
       en_state.each_key { |key| en_state.delete(key) unless source.key?(key) }
       @state.save(config.source_locale, en_state) unless dry_run
 
-      config.target_locales.each do |locale|
-        target = load_locale_translations(locale)
-        locale_state = @state.load(locale)
-
-        target.each_key do |key|
-          next unless source[key]
-
-          locale_state[key] = { "source_hash" => @state.hash(source[key]) }
-        end
-        locale_state.each_key { |key| locale_state.delete(key) unless target.key?(key) }
-        @state.save(locale, locale_state) unless dry_run
-      end
+      config.target_locales.each { |locale| sync_locale_state(source, locale) }
 
       combined = { config.source_locale => @state.load(config.source_locale) }
       config.target_locales.each { |locale| combined[locale] = @state.load(locale) }
@@ -166,6 +166,44 @@ module Locallingo
 
     def missing_validator = @missing_validator ||= Validators::Missing.new(cli_name:)
     def outdated_validator = @outdated_validator ||= Validators::Outdated.new(cli_name:)
+
+    def sync_locale_state(source, locale)
+      target = load_locale_translations(locale)
+      locale_state = @state.load(locale)
+
+      target.each_key do |key|
+        next unless source[key]
+
+        existing = locale_state[key]
+        entry = existing.is_a?(Hash) ? existing.dup : {}
+        entry["source_hash"] = @state.hash(source[key])
+        locale_state[key] = entry
+      end
+      locale_state.each_key { |key| locale_state.delete(key) unless target.key?(key) }
+      @state.save(locale, locale_state) unless dry_run
+    end
+
+    def keys_to_accept(source, target, locale_state, keys:, all:)
+      return keys.select { |key| source.key?(key) && target.key?(key) } if keys.any?
+      return target.keys.select { |key| source.key?(key) } if all
+
+      target.keys.select do |key|
+        entry = locale_state[key]
+        next false unless source.key?(key) && entry.is_a?(Hash) && !entry["manual"]
+
+        entry["target_hash"] && entry["target_hash"] != @state.hash(target[key])
+      end
+    end
+
+    def ensure_keys_matched!(keys, plans)
+      return if keys.empty?
+
+      matched = plans.flat_map { |_, _, _, accepted| accepted }
+      missing = keys - matched
+      return if missing.empty?
+
+      raise Error, "accept-edits: key(s) not found in any target locale: #{missing.join(", ")}"
+    end
 
     def translate_locale(source, target_locale, force:, force_keys:)
       log("Processing #{target_locale}...")
@@ -301,10 +339,15 @@ module Locallingo
       translations.each_key do |key|
         next unless source[key]
 
-        locale_state[key] = {
+        existing = locale_state[key]
+        entry = {
           "source_hash" => @state.hash(source[key]),
           "target_hash" => @state.hash(translations[key])
         }
+        # A force-keyed retranslation may overwrite a manual value on explicit
+        # request, but the protection flag itself must survive.
+        entry["manual"] = true if existing.is_a?(Hash) && existing["manual"]
+        locale_state[key] = entry
       end
     end
 

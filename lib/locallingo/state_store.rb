@@ -40,8 +40,9 @@ module Locallingo
             "This would cause state loss. Fix the JSON manually or restore from git."
     end
 
-    # Save a locale's state, split back into per-namespace files. Namespace files
-    # that no longer have keys are removed.
+    # Save a locale's state, split back into per-namespace files. Files whose
+    # content is unchanged are left untouched so unrelated namespaces never
+    # churn in diffs. Namespace files that no longer have keys are removed.
     def save(locale, locale_state)
       by_namespace = locale_state.each_with_object({}) do |(key, value), groups|
         namespace = key.split(".").first
@@ -50,7 +51,10 @@ module Locallingo
 
       by_namespace.each do |namespace, keys|
         state_file = File.join(state_dir, "#{namespace}.#{locale}.json")
-        File.write(state_file, JSON.pretty_generate(keys.sort.to_h))
+        content = JSON.pretty_generate(keys.sort.to_h)
+        next if File.exist?(state_file) && File.read(state_file) == content
+
+        File.write(state_file, content)
       end
 
       Dir.glob(File.join(state_dir, "*.#{locale}.json")).each do |file|

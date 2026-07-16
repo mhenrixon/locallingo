@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `lingo sync` no longer destroys hand-edit protection: it now only refreshes
+  each entry's `source_hash` and preserves `target_hash` and `manual: true`
+  (the pre-extraction `bin/translate` behavior). Previously a single sync wiped
+  both fields for every key, blinding the `manual_edits` validator and causing
+  `manual` flags to flip back and forth across branches.
+- `translate --force-key` on a `manual`-flagged key keeps the flag. The value is
+  still retranslated on explicit request, but no command removes `manual: true`
+  anymore — unprotecting a key requires editing the state JSON by hand.
+- State files whose content is unchanged are no longer rewritten, so operations
+  never touch `.i18n-state/` files for unrelated namespaces.
+
+### Changed
+- Unscoped `lingo accept-edits` now accepts only the keys the `manual_edits`
+  validator flags (actually hand-edited), instead of stamping `manual: true` on
+  every key of the locale. Use the new `--key KEY` (repeatable) for surgical
+  accepts, or `--all` for the old blanket behavior (initial adoption).
+- Validator suggestions are scoped and safe to follow verbatim: `manual_edit`
+  violations suggest `accept-edits --locale <l> --key <key>`, and `outdated`
+  violations on manual keys tell you to update the value by hand and re-accept
+  it rather than force-translating over curated text.
+
 ### Added
 - `Locallingo.configure { |c| c.anthropic_api_key = ... }` — gem-level provider
   credentials as Strings or lazy callables, for apps whose keys don't live in

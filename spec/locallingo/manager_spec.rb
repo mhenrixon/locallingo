@@ -150,6 +150,265 @@ RSpec.describe Locallingo::Manager do
     end
   end
 
+  describe "#sync_state! state preservation" do
+    it "preserves target_hash and manual while refreshing source_hash" do
+      with_app(
+        config: { "target_locales" => %w[de] },
+        locales: {
+          "en" => { "greeting" => { "hi" => "Hello" } },
+          "de" => { "greeting" => { "hi" => "Hallo" } }
+        }
+      ) do |root|
+        write_state(root, "greeting.de.json",
+                    "greeting.hi" => {
+                      "source_hash" => "stale000", "target_hash" => "cafecafe", "manual" => true
+                    })
+
+        described_class.new(config: config_for(root)).sync_state!
+
+        entry = read_state(root, "greeting.de.json").fetch("greeting.hi")
+        expect(entry["source_hash"]).to eq(Locallingo::StateStore.hash("Hello"))
+        expect(entry["target_hash"]).to eq("cafecafe") # untouched, not recomputed
+        expect(entry["manual"]).to be(true)
+      end
+    end
+
+    it "leaves bare entries bare (no target_hash or manual invented)" do
+      with_app(
+        config: { "target_locales" => %w[de] },
+        locales: {
+          "en" => { "greeting" => { "hi" => "Hello" } },
+          "de" => { "greeting" => { "hi" => "Hallo" } }
+        }
+      ) do |root|
+        write_state(root, "greeting.de.json", "greeting.hi" => { "source_hash" => "stale000" })
+
+        described_class.new(config: config_for(root)).sync_state!
+
+        entry = read_state(root, "greeting.de.json").fetch("greeting.hi")
+        expect(entry).to eq("source_hash" => Locallingo::StateStore.hash("Hello"))
+      end
+    end
+
+    it "still prunes entries for keys no longer in the target files" do
+      with_app(
+        config: { "target_locales" => %w[de] },
+        locales: {
+          "en" => { "greeting" => { "hi" => "Hello" } },
+          "de" => { "greeting" => { "hi" => "Hallo" } }
+        }
+      ) do |root|
+        write_state(root, "greeting.de.json",
+                    "greeting.hi" => { "source_hash" => "stale000" },
+                    "greeting.gone" => { "source_hash" => "dead0000", "manual" => true })
+
+        described_class.new(config: config_for(root)).sync_state!
+
+        expect(read_state(root, "greeting.de.json").keys).to eq(["greeting.hi"])
+      end
+    end
+  end
+
+  describe "#translate! and manual keys" do
+    it "retranslates a manual key via force_keys but preserves the manual flag" do
+      with_app(
+        config: { "target_locales" => %w[de] },
+        locales: {
+          "en" => { "greeting" => { "hi" => "Hello" } },
+          "de" => { "greeting" => { "hi" => "Hallo" } }
+        }
+      ) do |root|
+        write_state(root, "greeting.de.json",
+                    "greeting.hi" => {
+                      "source_hash" => "stale000",
+                      "target_hash" => Locallingo::StateStore.hash("Hallo"),
+                      "manual" => true
+                    })
+        stub_llm_chat { |payload:, **| payload.transform_values { |v| "DE:#{v}" } }
+
+        described_class.new(config: config_for(root)).translate!(locale: "de", force_keys: ["greeting.hi"])
+
+        de = YAML.load_file(File.join(root, "config/locales/greeting.de.yml"))
+        expect(de.dig("de", "greeting", "hi")).to eq("DE:Hello")
+
+        entry = read_state(root, "greeting.de.json").fetch("greeting.hi")
+        expect(entry["source_hash"]).to eq(Locallingo::StateStore.hash("Hello"))
+        expect(entry["target_hash"]).to eq(Locallingo::StateStore.hash("DE:Hello"))
+        expect(entry["manual"]).to be(true)
+      end
+    end
+
+    it "skips manual keys under --force" do
+      with_app(
+        config: { "target_locales" => %w[de] },
+        locales: {
+          "en" => { "greeting" => { "hi" => "Hello", "bye" => "Goodbye" } },
+          "de" => { "greeting" => { "hi" => "Hallo", "bye" => "Tschau" } }
+        }
+      ) do |root|
+        write_state(root, "greeting.de.json",
+                    "greeting.hi" => {
+                      "source_hash" => Locallingo::StateStore.hash("Hello"),
+                      "target_hash" => Locallingo::StateStore.hash("Hallo"),
+                      "manual" => true
+                    })
+        stub_llm_chat { |payload:, **| payload.transform_values { |v| "DE:#{v}" } }
+
+        described_class.new(config: config_for(root)).translate!(locale: "de", force: true)
+
+        de = YAML.load_file(File.join(root, "config/locales/greeting.de.yml"))
+        expect(de.dig("de", "greeting", "hi")).to eq("Hallo") # protected
+        expect(de.dig("de", "greeting", "bye")).to eq("DE:Goodbye")
+        expect(read_state(root, "greeting.de.json").dig("greeting.hi", "manual")).to be(true)
+      end
+    end
+  end
+
+  describe "#accept_edits!" do
+    let(:matrix_locales) do
+      {
+        "en" => { "g" => { "machine" => "M", "edited" => "E", "bare" => "B", "fresh" => "F" } },
+        "de" => { "g" => { "machine" => "M-de", "edited" => "E-de", "bare" => "B-de", "fresh" => "F-de" } }
+      }
+    end
+
+    def seed_matrix_state(root)
+      write_state(root, "g.de.json",
+                  "g.machine" => {
+                    "source_hash" => Locallingo::StateStore.hash("M"),
+                    "target_hash" => Locallingo::StateStore.hash("M-de")
+                  },
+                  "g.edited" => {
+                    "source_hash" => Locallingo::StateStore.hash("E"),
+                    "target_hash" => "00000000"
+                  },
+                  "g.bare" => { "source_hash" => Locallingo::StateStore.hash("B") })
+    end
+
+    it "unscoped accepts only hand-edited (drifted) keys" do
+      with_app(config: { "target_locales" => %w[de] }, locales: matrix_locales) do |root|
+        seed_matrix_state(root)
+
+        described_class.new(config: config_for(root)).accept_edits!
+
+        state = read_state(root, "g.de.json")
+        expect(state.dig("g.edited", "manual")).to be(true)
+        expect(state.dig("g.edited", "target_hash")).to eq(Locallingo::StateStore.hash("E-de"))
+        expect(state.fetch("g.machine")).not_to have_key("manual")
+        expect(state.fetch("g.bare")).to eq("source_hash" => Locallingo::StateStore.hash("B"))
+        expect(state).not_to have_key("g.fresh")
+      end
+    end
+
+    it "with keys: stamps exactly the named keys and leaves other namespaces byte-identical" do
+      with_app(
+        config: { "target_locales" => %w[de] },
+        locales: {
+          "en" => { "g" => { "hi" => "Hello" }, "admin" => { "title" => "Admin" } },
+          "de" => { "g" => { "hi" => "Hallo-edited" }, "admin" => { "title" => "Verwaltung" } }
+        }
+      ) do |root|
+        write_state(root, "g.de.json",
+                    "g.hi" => { "source_hash" => Locallingo::StateStore.hash("Hello"),
+                                "target_hash" => "deadbeef" })
+        write_state(root, "admin.de.json",
+                    "admin.title" => { "source_hash" => Locallingo::StateStore.hash("Admin"),
+                                       "target_hash" => "cafebabe" })
+        admin_before = File.read(File.join(root, ".i18n-state", "admin.de.json"))
+
+        described_class.new(config: config_for(root)).accept_edits!(keys: ["g.hi"])
+
+        expect(read_state(root, "g.de.json").fetch("g.hi")).to eq(
+          "source_hash" => Locallingo::StateStore.hash("Hello"),
+          "target_hash" => Locallingo::StateStore.hash("Hallo-edited"),
+          "manual" => true
+        )
+        expect(File.read(File.join(root, ".i18n-state", "admin.de.json"))).to eq(admin_before)
+      end
+    end
+
+    it "with keys: raises for a key present in no locale" do
+      with_app(config: { "target_locales" => %w[de] }, locales: matrix_locales) do |root|
+        seed_matrix_state(root)
+
+        expect { described_class.new(config: config_for(root)).accept_edits!(keys: ["g.nope"]) }
+          .to raise_error(Locallingo::Error, /g\.nope/)
+      end
+    end
+
+    it "with all: true stamps every translated key" do
+      with_app(config: { "target_locales" => %w[de] }, locales: matrix_locales) do |root|
+        seed_matrix_state(root)
+
+        described_class.new(config: config_for(root)).accept_edits!(all: true)
+
+        state = read_state(root, "g.de.json")
+        expect(state.keys).to match_array(%w[g.machine g.edited g.bare g.fresh])
+        expect(state.values).to all(include("manual" => true))
+      end
+    end
+  end
+
+  describe "validator suggestions" do
+    it "tells the operator to hand-update outdated manual keys instead of force-translating" do
+      with_app(
+        config: { "target_locales" => %w[de], "validators" => { "manual_edits" => true } },
+        locales: {
+          "en" => { "g" => { "hi" => "Hello" } },
+          "de" => { "g" => { "hi" => "Hallo" } }
+        }
+      ) do |root|
+        write_state(root, "g.de.json",
+                    "g.hi" => {
+                      "source_hash" => "stale000",
+                      "target_hash" => Locallingo::StateStore.hash("Hallo"),
+                      "manual" => true
+                    })
+
+        violations = described_class.new(config: config_for(root)).validate
+        outdated = violations.find { |v| v[:type] == :outdated }
+        expect(outdated[:suggestion]).to include("by hand")
+        expect(outdated[:suggestion]).to include("accept-edits --locale de --key g.hi")
+      end
+    end
+
+    it "keeps the force-key suggestion for outdated non-manual keys" do
+      with_app(
+        config: { "target_locales" => %w[de] },
+        locales: {
+          "en" => { "g" => { "hi" => "Hello" } },
+          "de" => { "g" => { "hi" => "Hallo" } }
+        }
+      ) do |root|
+        write_state(root, "g.de.json", "g.hi" => { "source_hash" => "stale000" })
+
+        violations = described_class.new(config: config_for(root)).validate
+        outdated = violations.find { |v| v[:type] == :outdated }
+        expect(outdated[:suggestion]).to include("translate --locale de --force-key g.hi")
+      end
+    end
+
+    it "suggests a key-scoped accept-edits for hand-edited values" do
+      with_app(
+        config: { "target_locales" => %w[de], "validators" => { "manual_edits" => true } },
+        locales: {
+          "en" => { "g" => { "hi" => "Hello" } },
+          "de" => { "g" => { "hi" => "Hallo edited" } }
+        }
+      ) do |root|
+        write_state(root, "g.de.json",
+                    "g.hi" => {
+                      "source_hash" => Locallingo::StateStore.hash("Hello"),
+                      "target_hash" => "00000000"
+                    })
+
+        violations = described_class.new(config: config_for(root)).validate
+        manual_edit = violations.find { |v| v[:type] == :manual_edit }
+        expect(manual_edit[:suggestion]).to include("accept-edits --locale de --key g.hi")
+      end
+    end
+  end
+
   describe "#sync_state! then outdated detection" do
     it "flags a key as outdated after its source changes" do
       with_app(

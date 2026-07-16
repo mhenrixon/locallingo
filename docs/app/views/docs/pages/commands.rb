@@ -38,7 +38,8 @@ class Views::Docs::Pages::Commands < DocsUI::Page
 
         - `--locale de` limits to one locale.
         - `--force` re-translates everything (respecting protected manual edits).
-        - `--force-key a.b.c` re-translates specific keys.
+        - `--force-key a.b.c` re-translates specific keys — including
+          manual-flagged ones, whose `manual` flag survives the rewrite.
         - `--dry-run` shows the plan without writing.
 
         On success it runs the configured `after_translate` hooks. Requires
@@ -73,9 +74,17 @@ class Views::Docs::Pages::Commands < DocsUI::Page
   def accept_edits
     DocsUI::Section("accept-edits") do
       md <<~'MD'
-        When the `manual_edits` validator is enabled, `accept-edits` records the
-        current target values as intentional so they are protected from being
+        When the `manual_edits` validator is enabled, `accept-edits` records
+        hand-edited target values as intentional so they are protected from being
         overwritten by the next `translate` and no longer flagged as hand-edited.
+
+        - Unscoped, it accepts exactly the keys the `manual_edits` validator
+          flags — nothing else changes.
+        - `--key a.b.c` (repeatable) accepts specific keys, drifted or not.
+        - `--all` marks every translated key as manual — the blanket form, for
+          adopting locallingo on an app whose translations were all hand-made.
+        - `--locale de` limits any of the above to one locale.
+
         See [Drift & state](/docs/drift-state).
       MD
     end
@@ -84,9 +93,12 @@ class Views::Docs::Pages::Commands < DocsUI::Page
   def sync
     DocsUI::Section("sync") do
       md <<~'MD'
-        Rebuilds the `.i18n-state/` drift state from the current locale files —
-        for initial setup on an existing app, or after manual edits, so `validate`
-        doesn't report spurious "outdated" keys.
+        Refreshes the `.i18n-state/` drift state from the current locale files —
+        for initial setup on an existing app, or after editing source strings, so
+        `validate` doesn't report spurious "outdated" keys. It updates each key's
+        `source_hash` and prunes entries whose keys were removed; `target_hash`
+        and `manual` flags are always preserved, so hand-edit protection never
+        depends on when sync last ran.
       MD
     end
   end

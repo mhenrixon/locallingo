@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "yaml"
+require "json"
 require "fileutils"
 
 # Builds a throwaway app directory (config/locales + .locallingo.yml) in a tmp
@@ -44,5 +45,16 @@ module LocaleFixtures
   # A config resolved against a tmp app.
   def config_for(root, package: nil)
     Locallingo::Configuration.load(root_path: root, package:)
+  end
+
+  # Seed a `.i18n-state/<namespace>.<locale>.json` file with raw entries.
+  def write_state(root, filename, entries)
+    dir = File.join(root, ".i18n-state")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, filename), JSON.pretty_generate(entries))
+  end
+
+  def read_state(root, filename)
+    JSON.parse(File.read(File.join(root, ".i18n-state", filename)))
   end
 end

@@ -12,6 +12,7 @@ class Views::Docs::Pages::DriftState < DocsUI::Page
     the_files
     outdated
     manual_edits
+    flag_permanence
     syncing
   end
 
@@ -66,8 +67,21 @@ class Views::Docs::Pages::DriftState < DocsUI::Page
         With `validators.manual_edits` enabled, state entries also carry a
         `target_hash` and a `manual` flag. If someone hand-tunes a translation, its
         target hash no longer matches and `validate` flags a `manual_edit`.
-        Running `lingo accept-edits` stamps the current values as intentional
-        (setting `manual: true`), and `translate --force` then leaves them alone.
+        Running `lingo accept-edits` stamps the flagged values as intentional
+        (setting `manual: true`) — add `--key a.b.c` to accept one key surgically.
+        Protected keys are skipped by `translate` and `--force`; only an explicit
+        `--force-key` rewrites one, and even then the `manual` flag survives.
+      MD
+    end
+  end
+
+  def flag_permanence
+    DocsUI::Section("The flag is permanent") do
+      md <<~'MD'
+        No command removes `manual: true` — not `sync`, not `translate`, not
+        `--force-key`. The only way to unprotect a key is to delete the flag from
+        its `.i18n-state/` entry by hand. That makes state diffs boring: a PR only
+        touches the entries for keys it actually changed.
       MD
     end
   end
@@ -75,10 +89,12 @@ class Views::Docs::Pages::DriftState < DocsUI::Page
   def syncing
     DocsUI::Section("Rebuilding state") do
       md <<~'MD'
-        Adopting locallingo on an existing app, or making a batch of manual edits,
-        can leave the state out of step with the files. `lingo sync` rewrites the
-        state from the current translations so nothing reads as spuriously
-        outdated.
+        Adopting locallingo on an existing app, or editing a batch of source
+        strings, can leave the state out of step with the files. `lingo sync`
+        refreshes each key's `source_hash` from the current translations and
+        prunes entries for removed keys, so nothing reads as spuriously outdated.
+        It never touches `target_hash` or `manual` — hand-edit drift stays
+        visible until you resolve it with `accept-edits`.
       MD
       DocsUI::Callout(:note) do
         plain "Run "
