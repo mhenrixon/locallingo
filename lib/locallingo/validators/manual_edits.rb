@@ -30,7 +30,7 @@ module Locallingo
             type: :manual_edit,
             locale:,
             key:,
-            suggestion: "Value was hand-edited. Protect it: #{@cli_name} accept-edits --locale #{locale}"
+            suggestion: "Value was hand-edited. Protect it: #{@cli_name} accept-edits --locale #{locale} --key #{key}"
           }
         end
       end

@@ -109,6 +109,10 @@ module Locallingo
         opts.on("--force-key KEY", "Force re-translation of a specific key") do |v|
           (@options[:force_keys] ||= []) << v
         end
+        opts.on("--key KEY", "accept-edits: accept a specific key (repeatable)") do |v|
+          (@options[:keys] ||= []) << v
+        end
+        opts.on("--all", "accept-edits: mark every translated key as manual") { @options[:all] = true }
         opts.on("-v", "--verbose", "Verbose output") { @options[:verbose] = true }
         opts.on("-n", "--dry-run", "Show what would be done without changing files") { @options[:dry_run] = true }
         opts.on("--strict", "Fail on strict-tier issues (for CI)") { @options[:strict] = true }
@@ -185,9 +189,23 @@ module Locallingo
         warn "manual_edits validator is disabled in .locallingo.yml — nothing to accept."
         return
       end
-      manager(config, options).accept_edits!(locale: options[:locale])
-      puts "✅ Marked current translations as intentional."
+
+      results = manager(config, options).accept_edits!(
+        locale: options[:locale], keys: options[:keys] || [], all: options.fetch(:all, false)
+      )
+      report_accepted(results)
       puts "(dry run - no changes made)" if options[:dry_run]
+    end
+
+    def report_accepted(results)
+      total = results.values.sum(&:size)
+      if total.zero?
+        puts "Nothing to accept — no hand-edited translations found."
+        return
+      end
+
+      results.each { |locale, keys| puts "  #{locale}: #{keys.size} key(s)" if keys.any? }
+      puts "✅ Marked #{total} translation(s) as intentional."
     end
 
     def cmd_hash(config, options)

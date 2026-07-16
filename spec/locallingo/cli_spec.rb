@@ -84,6 +84,74 @@ RSpec.describe Locallingo::CLI do
     end
   end
 
+  describe "accept-edits" do
+    let(:accept_config) do
+      { "target_locales" => %w[de], "validators" => { "manual_edits" => true } }
+    end
+    let(:accept_locales) do
+      {
+        "en" => { "g" => { "hi" => "Hello", "bye" => "Goodbye" } },
+        "de" => { "g" => { "hi" => "Hallo edited", "bye" => "Tschau" } }
+      }
+    end
+
+    def seed_state(root)
+      write_state(root, "g.de.json",
+                  "g.hi" => { "source_hash" => Locallingo::StateStore.hash("Hello"),
+                              "target_hash" => "00000000" },
+                  "g.bye" => { "source_hash" => Locallingo::StateStore.hash("Goodbye"),
+                               "target_hash" => Locallingo::StateStore.hash("Tschau") })
+    end
+
+    it "unscoped accepts only drifted keys" do
+      with_app(config: accept_config, locales: accept_locales) do |root|
+        seed_state(root)
+
+        out, _err, _code = run_cli(root, %w[accept-edits])
+
+        state = read_state(root, "g.de.json")
+        expect(state.dig("g.hi", "manual")).to be(true)
+        expect(state.fetch("g.bye")).not_to have_key("manual")
+        expect(out).to include("1")
+      end
+    end
+
+    it "--key stamps only the named key" do
+      with_app(config: accept_config, locales: accept_locales) do |root|
+        seed_state(root)
+
+        run_cli(root, %w[accept-edits --locale de --key g.bye])
+
+        state = read_state(root, "g.de.json")
+        expect(state.dig("g.bye", "manual")).to be(true)
+        expect(state.fetch("g.hi")).not_to have_key("manual")
+      end
+    end
+
+    it "--all stamps every translated key" do
+      with_app(config: accept_config, locales: accept_locales) do |root|
+        seed_state(root)
+
+        run_cli(root, %w[accept-edits --all])
+
+        state = read_state(root, "g.de.json")
+        expect(state.dig("g.hi", "manual")).to be(true)
+        expect(state.dig("g.bye", "manual")).to be(true)
+      end
+    end
+
+    it "fails loudly for an unknown --key" do
+      with_app(config: accept_config, locales: accept_locales) do |root|
+        seed_state(root)
+
+        _out, err, code = run_cli(root, %w[accept-edits --key g.nope])
+
+        expect(err).to include("g.nope")
+        expect(code).to eq(1)
+      end
+    end
+  end
+
   describe ".locallingo.rb setup file" do
     it "loads it before dispatch so it can configure credentials" do
       with_app(config: { "target_locales" => %w[de] }, locales:) do |root|
