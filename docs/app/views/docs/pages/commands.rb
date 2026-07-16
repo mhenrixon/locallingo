@@ -96,9 +96,10 @@ class Views::Docs::Pages::Commands < DocsUI::Page
         Refreshes the `.i18n-state/` drift state from the current locale files —
         for initial setup on an existing app, or after editing source strings, so
         `validate` doesn't report spurious "outdated" keys. It updates each key's
-        `source_hash` and prunes entries whose keys were removed; `target_hash`
-        and `manual` flags are always preserved, so hand-edit protection never
-        depends on when sync last ran.
+        `source_hash`, backfills a `target_hash` baseline for entries that lack
+        one (hand-added translations), and prunes entries whose keys were
+        removed. An existing `target_hash` and all `manual` flags are always
+        preserved, so hand-edit protection never depends on when sync last ran.
       MD
     end
   end

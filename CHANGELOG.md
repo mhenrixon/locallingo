@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- `lingo sync` backfills a missing `target_hash` from the current target value,
+  so hand-added translations (written straight into the YAML, never passing
+  through `translate` or `accept-edits`) get a baseline and the `manual_edits`
+  validator can watch them. An existing `target_hash` is still never
+  recomputed — that would silently absorb hand-edit drift.
+
+### Fixed (0.4.0)
 - `lingo sync` no longer destroys hand-edit protection: it now only refreshes
   each entry's `source_hash` and preserves `target_hash` and `manual: true`
   (the pre-extraction `bin/translate` behavior). Previously a single sync wiped

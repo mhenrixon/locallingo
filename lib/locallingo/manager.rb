@@ -134,11 +134,12 @@ module Locallingo
       format("%08x", Zlib.crc32(load_source_translations.to_json))
     end
 
-    # Refresh source hashes from the current translation files and prune state
-    # for keys that no longer exist. Existing `target_hash`/`manual` fields are
-    # preserved — hand-edit protection is never dropped by a sync; use
-    # `accept_edits!` to resolve hand-edit drift explicitly. Returns the
-    # combined state.
+    # Refresh source hashes from the current translation files, backfill a
+    # `target_hash` baseline for entries that lack one, and prune state for
+    # keys that no longer exist. An existing `target_hash` and the `manual`
+    # flag are never touched — hand-edit protection is never dropped by a
+    # sync; use `accept_edits!` to resolve hand-edit drift explicitly.
+    # Returns the combined state.
     def sync_state!
       source = load_source_translations
 
@@ -171,12 +172,16 @@ module Locallingo
       target = load_locale_translations(locale)
       locale_state = @state.load(locale)
 
-      target.each_key do |key|
+      target.each do |key, value|
         next unless source[key]
 
         existing = locale_state[key]
         entry = existing.is_a?(Hash) ? existing.dup : {}
         entry["source_hash"] = @state.hash(source[key])
+        # Backfill a baseline for hand-added translations so the manual-edits
+        # validator can watch them; an existing target_hash is never recomputed —
+        # that would silently absorb hand-edit drift.
+        entry["target_hash"] ||= @state.hash(value)
         locale_state[key] = entry
       end
       locale_state.each_key { |key| locale_state.delete(key) unless target.key?(key) }

@@ -91,10 +91,12 @@ class Views::Docs::Pages::DriftState < DocsUI::Page
       md <<~'MD'
         Adopting locallingo on an existing app, or editing a batch of source
         strings, can leave the state out of step with the files. `lingo sync`
-        refreshes each key's `source_hash` from the current translations and
-        prunes entries for removed keys, so nothing reads as spuriously outdated.
-        It never touches `target_hash` or `manual` — hand-edit drift stays
-        visible until you resolve it with `accept-edits`.
+        refreshes each key's `source_hash` from the current translations, records
+        a `target_hash` baseline for entries that have none (translations added
+        straight to the YAML by hand), and prunes entries for removed keys, so
+        nothing reads as spuriously outdated. It never rewrites an existing
+        `target_hash` or any `manual` flag — hand-edit drift stays visible until
+        you resolve it with `accept-edits`.
       MD
       DocsUI::Callout(:note) do
         plain "Run "
