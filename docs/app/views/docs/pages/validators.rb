@@ -51,7 +51,10 @@ class Views::Docs::Pages::Validators < DocsUI::Page
         current English value — i.e. the source text changed after the translation
         was made, so the translation may no longer be accurate. See
         [Drift & state](/docs/drift-state) for how this is tracked. The fix is
-        `lingo translate` (or `--force-key` for a single key).
+        `lingo translate` (or `--force-key` for a single key). For keys flagged
+        `manual` the suggestion differs: update the hand-curated value yourself,
+        then `accept-edits --key` it — machine translation is never pushed onto
+        protected keys.
       MD
     end
   end
@@ -76,7 +79,9 @@ class Views::Docs::Pages::Validators < DocsUI::Page
         source hash. If a target value's current hash no longer matches — someone
         hand-edited it — this validator surfaces it so the next `translate`
         doesn't silently overwrite the edit. Confirm the edit with
-        `lingo accept-edits` to protect it. See [Drift & state](/docs/drift-state).
+        `lingo accept-edits --locale <l> --key <key>` to protect that key (or run
+        it unscoped to accept every flagged edit). See
+        [Drift & state](/docs/drift-state).
       MD
     end
   end

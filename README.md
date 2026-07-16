@@ -104,8 +104,10 @@ lingo validate --strict            # CI gate (exit 1 on strict-tier issues)
 lingo validate --strict-all        # stricter CI gate
 lingo quality --ai                 # quality linting (+ optional AI pass)
 lingo fix-quality --locale en      # auto-fix fixable issues
-lingo accept-edits --locale de     # mark current translations as intentional
-lingo sync                         # rebuild drift state from current files
+lingo accept-edits --locale de     # protect hand-edited translations (drifted keys only)
+lingo accept-edits --key a.b.c     # protect a specific key
+lingo accept-edits --all           # protect everything (initial adoption)
+lingo sync                         # refresh drift state (preserves manual flags)
 lingo hash                         # source-translation fingerprint
 ```
 
